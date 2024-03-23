@@ -1,0 +1,484 @@
+# =========================================================================
+# Version thetower.sk : 1.0.0
+# Date 23/03/2024
+# BugPig_
+# Skript version : 2.6.4
+# Skript extension : SkQuery-4.1.10 / Skelett-2.0.10 / skript-gui-1.3
+# plugin nécessaire : Multiverse-Core-4.3.1
+# =========================================================================
+# Gamerule du serveur : DoImmadiateRespawn True / KeepInventory True
+
+# OPTIONS POUR CONFIGURER LE JEU
+
+Options:
+    Prefix : &f[&eTheTower&f]
+    debug : &4[&cDEBUG THE TOWER&4]&f
+    MaxPlayerPerTeam : 4
+    MinPlayerPerTeam : 1
+    PointToWinAGame : 3
+    BlockToGoalForRed : blue concrete #block a atteindre pour marquer pour les rouges
+    BlockToGoalForBlue : red concrete #block a atteindre pour marquer pour les bleus
+    TimeToRespawnSpectator : 8 # secondes
+    SpawnIronSecondDelay : 300 # tick
+    SpawnXPSecondDelay : 400 # secondes
+    SafeZoneBase : 5 # Rayon de protection des bases (impossible de poser des blocks)
+
+# COMMANDE POUR LE SCRIPT
+command /thetower <text> [<text>] [<text>] [<text>]:
+    trigger:
+        if player has permission "dev":
+
+            if arg 1 is "create":
+                if arg 2 is set:
+                    if {tt_arena_list::*} contains arg 2:
+                        send "{@Prefix} &cCette arene existe déja" to player
+                        stop
+                        
+                    else:
+                        add arg 2 to {tt_arena_list::*}
+                        send "{@Prefix} &fVous venez de créer l'arene : &e%arg 2%" to player
+                        stop
+
+            if arg 1 is "delete":
+                if arg 2 is set:
+                    if {tt_arena_list::*} contains arg 2:
+                        delete {tt.%arg 2%.team.blue}
+                        delete {tt.%arg 2%.team.red}
+                        delete {tt.%arg 2%.spawn.iron}
+                        delete {tt.%arg 2%.spawn.xp}
+                        remove arg 2 from {tt_arena_list::*}
+                        send "{@Prefix} &fVous venez de supprimer l'arene : &e%arg 2%" to player
+                    else:
+                        send "{@Prefix} &cC ette arene n'existe pas vous ne pouvez pas la supprimer" to player
+
+            if arg 1 is "reload":
+                reinitPlugin()
+                send "{@Prefix} &7Le plugin est en cours de reload..." to player
+
+            if arg 1 is "list":
+                if size of {tt_arena_list::*} > 0:
+                    send "{@Prefix} &fListe des arenes TheTower :" to player
+                    loop {tt_arena_list::*}:
+                        send "  &f- &e%loop-value%"
+            
+            if arg 1 is "mainlobby":
+                set {tt_lobby} to location of player
+                send "{@Prefix} &fVous venez de définir les coordonnées du lobby principal" to player
+
+            if arg 1 is "setup":
+                if {tt_arena_list::*} contains arg 2:
+
+                    if arg 3 is "world": # enregistrement du monde sans le play
+                        set {tt.%arg 2%.world} to event-player's world
+                        send "{@Prefix} &fLe monde &e%{tt.%arg 2%.world}% &fsera maintenant cloné au nom de &e%{tt.%arg 2%.world}%_play &fpour créer les parties de l'arene &e%arg 2%" to player
+
+                    if arg 3 is "lobby":
+                        set {tt.%arg 2%.lobby} to location of player
+                        send "{@Prefix} &fVous venez de définir lobby de l'arene &e%arg 2% &7(Attention le lobby de l'arene doit être sur le même monde que la partie)" to player 
+
+                    if arg 3 is "spectator":
+                        set {tt.%arg 2%.spectator} to location of player
+                        send "{@Prefix} &fVous venez de définir le spawn des spectateurs de l'arene &e%arg 2%" to player 
+
+                    if arg 3 is "team":
+                        if arg 4 is "blue":
+                            set {tt.%arg 2%.team.blue} to location of player
+                            send "{@Prefix} &fVous venez de définir le spawn de la team &1bleu &fpour l'arene &e%arg 2%" to player
+                        if arg 4 is "red":
+                            set {tt.%arg 2%.team.red} to location of player
+                            send "{@Prefix} &fVous venez de définir le spawn de la team &crouge &fpour l'arene &e%arg 2%" to player
+
+                    if arg 3 is "spawn":
+                        if arg 4 is "iron":
+                            set {tt.%arg 2%.spawn.iron} to location of player
+                            send "{@Prefix} &fVous venez de définir le spawn du &8fer &fpour l'arene &e%arg 2%" to player
+                        if arg 4 is "xp":
+                            set {tt.%arg 2%.spawn.xp} to location of player
+                            send "{@Prefix} &fVous venez de définir le spawn de &axp &fpour l'arene &e%arg 2%" to player
+                            send ("%{tt.%arg 2%.spawn.xp}%") to player
+                else:
+                    send "{@Prefix} &cL'arene que vous voulez modifier n'existe pas" to player 
+                
+        if arg 1 is "join":
+            if arg 2 is set:
+                joinArena(player, arg 2)
+        if arg 1 is "leave":
+            leaveArena(player)
+        if arg 1 is "team":
+            selectTeam(player, arg 2)
+
+# FONCTIONS DU SCRIPT
+
+function reinitPlugin():
+    loop {tt_arena_list::*}:
+        resetArena(loop-value)
+    loop all players:
+        if {tt.player.arena.%loop-value%} is set:
+            teleport loop-value to {tt_lobby}
+            delete {tt.player.arena.%loop-value%}
+    broadcast "{@Prefix} &aLe plugin a bien été reload !"
+
+function reinitMap(ArenaName : text):
+    delete {tt.%{_ArenaName}%.players::*}
+    delete {tt.%{_ArenaName}%.players.team.blue::*}
+    delete {tt.%{_ArenaName}%.players.team.red::*}
+    set {tt.%{_ArenaName}%.states} to 0
+    set {tt.%{_ArenaName}%.points.red} to 0
+    set {tt.%{_ArenaName}%.points.blue} to 0
+    set {tt.%{_ArenaName}%.cd.iron} to 0
+
+function initPlayer(p : player):
+    delete {tt.player.arena.%{_p}%}
+
+function joinArena(p : player, ArenaName : text):
+    if {tt.player.arena.%{_p}%} is set:
+        send "{@Prefix} &cVous etes déja dans une partie" to {_p}
+        stop
+    else:
+        if {tt.%{_ArenaName}%.states} = 0:
+            teleport {_p} to {tt.%{_ArenaName}%.lobby}
+            add {_p} to {tt.%{_ArenaName}%.players::*}
+            set {tt.player.arena.%{_p}%} to {_ArenaName}
+            set {tt.player.goal.couldown.%{_p}%} to false
+            set {_p}'s game mode to survival
+            clear {_p}'s inventory
+            heal {_p}
+            set {_p}'s hunger bar to 10
+            set level of {_p} to 0
+            clear all the potion effects of {_p}
+            wipe {_p}'s sidebar
+            send "{@Prefix} &fVous avez rejoint l'arene &e%{_ArenaName}%" to {_p}
+        else:
+            send "{@Prefix} &cLa partie est déja en cours..." to {_p}
+
+function leaveArena(p : player):
+    set {_ArenaName} to {tt.player.arena.%{_p}%}
+    remove {_p} from {tt.%{_ArenaName}%.players.team.blue::*}
+    remove {_p} from {tt.%{_ArenaName}%.players.team.red::*}
+    remove {_p} from {tt.%{_ArenaName}%.players::*}
+    delete {tt.player.arena.%{_p}%}
+    clear {_p}'s inventory
+    clear all the potion effects of {_p}
+    wipe {_p}'s sidebar
+    teleport {_p} to {tt_lobby}
+
+function selectTeam(p : player, team : text):
+    if {tt.player.arena.%{_p}%} is set:
+        set {_ArenaName} to {tt.player.arena.%{_p}%}
+        
+        # Definir la taille des équipes
+        if {tt.%{_ArenaName}%.players.team.blue::*} is none:
+            set {_numberOfPlayerInTeamBlue} to 0
+        else:
+            set {_numberOfPlayerInTeamBlue} to size of {tt.%{_ArenaName}%.players.team.blue::*}
+
+        if {tt.%{_ArenaName}%.players.team.red::*} is none:
+            set {_numberOfPlayerInTeamRed} to 0
+        else:
+            set {_numberOfPlayerInTeamRed} to size of {tt.%{_ArenaName}%.players.team.red::*}
+
+        # Faire rejoindre le joueurs l'équipe sélectioné
+        if {_team} is "blue":
+            remove {_p} from {tt.%{_ArenaName}%.players.team.red::*}
+            if {_numberOfPlayerInTeamBlue} <= {@MaxPlayerPerTeam}:
+                add {_p} to {tt.%{_ArenaName}%.players.team.blue::*}
+                send "{@Prefix} &aVous avez rejoint l'équipe &1Bleu" to {_p}
+            else:
+                send "{@Prefix} &cL'équipe est déja pleine" to {_p}
+
+        if {_team} is "red":
+            remove {_p} from {tt.%{_ArenaName}%.players.team.blue::*}
+            if {_numberOfPlayerInTeamRed} <= {@MaxPlayerPerTeam}:
+                add {_p} to {tt.%{_ArenaName}%.players.team.red::*}
+                send "{@Prefix} &aVous avez rejoint l'équipe &cRouge" to {_p}
+            else:
+                send "{@Prefix} &cL'équipe est déja pleine" to {_p}
+        checkStart({_ArenaName})
+
+function checkStart(ArenaName : text):
+    set {_numberOfPlayerInTeamBlue} to size of {tt.%{_ArenaName}%.players.team.blue::*}
+    set {_numberOfPlayerInTeamRed} to size of {tt.%{_ArenaName}%.players.team.red::*}
+    set {_numberOfPlayer} to size of {tt.%{_ArenaName}%.players::*}
+    if {_numberOfPlayerInTeamBlue} >= {@MinPlayerPerTeam}:
+        if {_numberOfPlayerInTeamRed} >= {@MinPlayerPerTeam}:
+            if {_numberOfPlayerInTeamBlue} + {_numberOfPlayerInTeamRed} = {_numberOfPlayer}:
+                set {tt.%{_ArenaName}%.states} to 1
+                countDown({_ArenaName}, {_numberOfPlayer})
+
+function countDown(ArenaName : text , NumberOfValidPlayers : number):
+    set {_countdown} to 5
+    set {_displayCountDown} to {_countdown}
+    loop {_countdown} times:
+        wait 1 second
+        set {_numberOfPlayer} to size of {tt.%{_ArenaName}%.players::*}
+        if {_numberOfPlayer} = {_NumberOfValidPlayers}:
+            send "{@Prefix} &fLa partie commence dans &e%{_displayCountDown}%" to {tt.%{_ArenaName}%.players::*}
+            set {_displayCountDown} to {_displayCountDown} - 1
+        else:
+            send "{@Prefix} &cLancement de la partie annulé" to {tt.%{_ArenaName}%.players::*}
+            set {tt.%{_ArenaName}%.states} to 0
+            stop
+    send "{@Prefix} &fLa partie vient de commencer bonne chance !" to {tt.%{_ArenaName}%.players::*}
+    startGame({_ArenaName})
+
+function startGame(ArenaName : text):
+    teleport {tt.%{_ArenaName}%.players.team.red::*} to {tt.%{_ArenaName}%.team.red}
+    teleport {tt.%{_ArenaName}%.players.team.blue::*} to {tt.%{_ArenaName}%.team.blue}
+    set {tt.%{_ArenaName}%.states} to 2
+    loop {tt.%{_ArenaName}%.players::*}:
+        baseStuff(loop-value)
+        boardTT(loop-value, {_ArenaName})
+
+function baseStuff(p : player):
+    set {_ArenaName} to {tt.player.arena.%{_p}%}
+    set {_item} to leather pants
+    if {tt.%{_ArenaName}%.players.team.red::*} contains {_p}:
+        dye {_item} red
+    if {tt.%{_ArenaName}%.players.team.blue::*} contains {_p}:
+        dye {_item} blue
+    set leggings of {_p} to {_item}
+
+    set {_item} to leather helmet
+    if {tt.%{_ArenaName}%.players.team.red::*} contains {_p}:
+        dye {_item} red
+    if {tt.%{_ArenaName}%.players.team.blue::*} contains {_p}:
+        dye {_item} blue
+    set helmet of {_p} to {_item}
+
+    set {_item} to leather boots
+    if {tt.%{_ArenaName}%.players.team.red::*} contains {_p}:
+        dye {_item} red
+    if {tt.%{_ArenaName}%.players.team.blue::*} contains {_p}:
+        dye {_item} blue
+    set boots of {_p} to {_item}
+
+    give 15 baked potato to {_p}
+
+function deathInGame(p : player):
+    set {_ArenaName} to {tt.player.arena.%{_p}%}
+    heal {_p}
+    set {_p}'s game mode to spectator
+    clear {_p}'s inventory
+    clear all the potion effects of {_p}
+    teleport {_p} to {tt.%{_ArenaName}%.spectator}
+    send "{@Prefix} &e%{_p}% &fest mort(e)" to {tt.%{_ArenaName}%.players::*}
+    send "{@Prefix} Vous allez réapparaître à votre base dans &e{@TimeToRespawnSpectator} &fsecondes..." to {_p}
+    wait {@TimeToRespawnSpectator} seconds  
+    if {tt.%{_ArenaName}%.players.team.red::*} contains {_p}:
+        teleport {_p} to {tt.%{_ArenaName}%.team.red}
+    if {tt.%{_ArenaName}%.players.team.blue::*} contains {_p}:
+        teleport {_p} to {tt.%{_ArenaName}%.team.blue}
+    set {_p}'s game mode to survival
+    set level of {_p} to 0
+    set {_p}'s hunger bar to 10
+    baseStuff({_p})
+            
+function goalPoint(p : player, goal : text):
+    set {_ArenaName} to {tt.player.arena.%{_p}%}
+
+    if {_goal} is "red": # goal in red base
+        if {tt.%{_ArenaName}%.players.team.blue::*} contains {_p}:
+            if {tt.player.goal.couldown.%{_p}%} is false:
+                set {tt.player.goal.couldown.%{_p}%} to true
+                add 1 to {tt.%{_ArenaName}%.points.blue}
+                teleport {_p} to {tt.%{_ArenaName}%.team.blue}
+                wait 10 tick
+                set {tt.player.goal.couldown.%{_p}%} to false
+                loop {tt.%{_ArenaName}%.players::*}:
+                    boardTT(loop-value, {_ArenaName})
+                send "{@Prefix} &fL'équipe &1bleue &fa marqué un point" to {tt.%{_ArenaName}%.players::*}
+
+    if {_goal} is "blue": # goal in bleu base
+        if {tt.%{_ArenaName}%.players.team.red::*} contains {_p}:
+            if {tt.player.goal.couldown.%{_p}%} is false:
+                set {tt.player.goal.couldown.%{_p}%} to true
+                add 1 to {tt.%{_ArenaName}%.points.red}
+                teleport {_p} to {tt.%{_ArenaName}%.team.red}
+                wait 10 tick
+                set {tt.player.goal.couldown.%{_p}%} to false
+                loop {tt.%{_ArenaName}%.players::*}:
+                    boardTT(loop-value, {_ArenaName})
+                send "{@Prefix} &fL'équipe &crouge &fa marqué un point" to {tt.%{_ArenaName}%.players::*}
+    checkEndGame({_ArenaName})
+
+function checkEndGame(ArenaName : text):
+    if {tt.%{_ArenaName}%.states} is 2:
+        if {tt.%{_ArenaName}%.points.red} >= {@PointToWinAGame}:
+            declareVictory({_ArenaName}, "red")
+        if {tt.%{_ArenaName}%.points.blue} >= {@PointToWinAGame}:
+            declareVictory({_ArenaName}, "blue")
+
+            
+function declareVictory(ArenaName : text, team : text):
+    set {tt.%{_ArenaName}%.states} to 3
+    set {tt.%{_ArenaName}%.players::*}'s game mode to spectator
+    teleport {tt.%{_ArenaName}%.players::*} to {tt.%{_ArenaName}%.spectator}
+    if {_team} is "red":
+        send "{@Prefix} &eVICTOIRE DE L'EQUIPE &cROUGE &e!" to {tt.%{_ArenaName}%.players::*}
+    if {_team} is "blue":
+        send "{@Prefix} &eVICTOIRE DE L'EQUIPE &1BLEU &e!" to {tt.%{_ArenaName}%.players::*}
+    wait 5 seconds
+    send "{@Prefix} &7Téléportation vers le lobby dans &e15 secondes" to {tt.%{_ArenaName}%.players::*}
+    wait 15 seconds
+    loop {tt.%{_ArenaName}%.players::*}:
+        leaveArena(loop-value)
+    resetArena({_ArenaName})
+
+function resetArena(ArenaName : text):
+    set {tt.%{_ArenaName}%.states} to 4
+    wait 10 tick
+    cloneMap("%{tt.%{_ArenaName}%.world}%")
+    wait 5 seconds
+    reInitCoords({_ArenaName})
+    reinitMap({_ArenaName})
+
+function cloneMap(mapName: text = "default"):
+    make console execute command "/mv delete %{_mapName}%_play"
+    make console execute command "/mv confirm"
+    make console execute command "/mv clone %{_mapName}% %{_mapName}%_play"
+    make console execute command "/mvrule doImmediateRespawn true %{_mapName}%_play"
+    make console execute command "/mvrule keepInventory true %{_mapName}%_play"
+
+function reInitCoords(ArenaName : text):
+    if {tt_arena_list::*} contains {_ArenaName}:
+        set {_world_play} to "%{tt.%{_ArenaName}%.world}%_play"
+        set world of {tt.%{_ArenaName}%.team.blue} to {_world_play}
+        set world of {tt.%{_ArenaName}%.team.red} to {_world_play}
+        set world of {tt.%{_ArenaName}%.spawn.iron} to {_world_play}
+        set world of {tt.%{_ArenaName}%.spawn.xp} to {_world_play}
+        set world of {tt.%{_ArenaName}%.lobby} to {_world_play}
+        set world of {tt.%{_ArenaName}%.spectator} to {_world_play}
+
+function boardTT(p : player, ArenaName : text):
+    wipe {_p}'s sidebar
+    set name of sidebar of {_p} to "&e&lTHE TOWER"
+    set score " " in sidebar of {_p} to 6
+    set score "&nÉquipes:" in sidebar of {_p} to 5
+    set score "        " in sidebar of {_p} to 4
+    set score "&9Points bleu : &f%{tt.%{_ArenaName}%.points.blue}%" in sidebar of {_p} to 3
+    set score "&cPoints rouge : &f%{tt.%{_ArenaName}%.points.red}%" in sidebar of {_p} to 2
+    set score " " in sidebar of {_p} to 1
+    set score "&ezortek.ovh" in sidebar of {_p} to 0
+
+command /reinitcoord <text>:
+    trigger:
+        if arg 1 is set:
+            reInitCoords(arg 1)
+            send "Vous venez de renit les coord" to player
+
+command /resetmap:
+    trigger:
+        cloneMap("map_tt_legacy")
+
+command /tpreset:
+    trigger:
+        teleport player to {tt.wesh.team.blue}
+        send "%{tt.wesh.team.blue}%" to player
+
+command /checkmystart:
+    trigger:
+        checkStart("wesh")
+
+# EVENEMENTS
+on skript start:
+    reinitPlugin()
+
+on break:
+    if {tt.%{tt.player.arena.%player%}%.states} is 0:
+        cancel event
+    if {tt.%{tt.player.arena.%player%}%.states} is 1:
+        cancel event
+    if {tt.%{tt.player.arena.%player%}%.states} is 3:
+        cancel event
+
+on place:
+    if {tt.%{tt.player.arena.%player%}%.states} is 0:
+        cancel event
+    if {tt.%{tt.player.arena.%player%}%.states} is 1:
+        cancel event
+
+on damage:
+    if {tt.%{tt.player.arena.%victim%}%.states} is 0 or 1 or 3:
+        cancel event
+    if {tt.%{tt.player.arena.%victim%}%.states} is 2:
+        set {_ArenaName} to {tt.player.arena.%victim%}
+        if {tt.%{_ArenaName}%.players.team.blue::*} contains victim:
+            if {tt.%{_ArenaName}%.players.team.blue::*} contains attacker:  
+                cancel event
+        if {tt.%{_ArenaName}%.players.team.red::*} contains victim:
+            if {tt.%{_ArenaName}%.players.team.red::*} contains attacker:  
+                cancel event
+
+on quit:
+    leaveArena(player)
+
+on join:
+    initPlayer(player)
+
+on death:
+    loop all items in victim's inventory:
+        if loop-item != leather armor:
+            add loop-item to {_drops::*}
+    drop {_drops::*} at event-location
+    deathInGame(victim)
+
+on item damage:
+    if event-item is leather armor:
+        cancel event
+
+on inventory click:
+    if event-item is helmet:
+        cancel event
+    if event-item is leggings:
+        cancel event
+    if event-item is boots:
+        cancel event
+
+on break:
+    if {tt.player.arena.%player%} is set:
+        if event-block is {@BlockToGoalForBlue}:
+            cancel event
+        if event-block is {@BlockToGoalForRed}:
+            cancel event
+
+on place:
+    if {tt.player.arena.%player%} is set:
+        set {_ArenaName} to {tt.player.arena.%player%}
+        if {tt.%{_ArenaName}%.states} is 2:
+            set {_distance} to distance between event-block and {tt.%{_ArenaName}%.team.red}
+            if {_distance} < {@SafeZoneBase}:
+                cancel event
+
+            set {_distance} to distance between event-block and {tt.%{_ArenaName}%.team.blue}
+            if {_distance} < {@SafeZoneBase}:
+                cancel event
+
+on every tick:
+
+    loop {tt_arena_list::*}:
+        if {tt.%loop-value-1%.states} is 2:
+
+            add 1 to {tt.%loop-value-1%.cd.iron}
+            add 1 to {tt.%loop-value-1%.cd.xp}
+
+            loop {tt.%loop-value-1%.players::*}:
+                if block under loop-value-2 is {@BlockToGoalForBlue}:
+                    goalPoint(loop-value-2, "red")
+                if block under loop-value-2 is {@BlockToGoalForRed}:
+                    goalPoint(loop-value-2, "blue")
+
+            if {tt.%loop-value-1%.cd.iron} >= {@SpawnIronSecondDelay}:
+                drop iron ingot at {tt.%loop-value-1%.spawn.iron}
+                set {tt.%loop-value-1%.cd.iron} to 0
+
+            if {tt.%loop-value-1%.cd.xp} >= {@SpawnXPSecondDelay}:
+                drop experience bottle at {tt.%loop-value-1%.spawn.xp}
+                set {tt.%loop-value-1%.cd.xp} to 0
+
+            
+
+
+
+
+
+    
