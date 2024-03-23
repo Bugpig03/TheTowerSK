@@ -5,13 +5,13 @@ Comme the tower mais en skript !
 
 ## Environement
 Skript version : 
-- 2.6.4
+- 2.6.4  
 Skript extension : 
 - SkQuery-4.1.10
 - Skelett-2.0.10 
 - skript-gui-1.3
 - SkRayFall
-Plugin requis :
+Plugin requis :  
 - Multiverse-Core-4.3.1
 
 # Fonctions
